@@ -6,14 +6,15 @@ const client = new Client({
     intents: [GatewayIntentBits.Guilds]
 });
 
-// Slash command
+// ███ SLASH COMMAND SETUP ███
+
 const commands = [
     new SlashCommandBuilder()
         .setName("owstats")
         .setDescription("Get Overwatch stats.")
         .addStringOption(option =>
             option.setName("battletag")
-                .setDescription("Your BattleTag (ex: name#1234)")
+                .setDescription("Your BattleTag (example: name#1234)")
                 .setRequired(true)
         )
         .addStringOption(option =>
@@ -23,12 +24,14 @@ const commands = [
                     { name: "Quick Play", value: "quickplay" },
                     { name: "Competitive", value: "competitive" }
                 )
+                .setRequired(false)
         )
         .toJSON()
 ];
 
 const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
 
+// Register slash commands
 (async () => {
     try {
         console.log("Registering slash commands...");
@@ -38,9 +41,12 @@ const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
         );
         console.log("Commands registered.");
     } catch (err) {
-        console.error(err);
+        console.error("COMMAND REGISTRATION ERROR:", err);
     }
 })();
+
+
+// ███ COMMAND HANDLER ███
 
 client.on("interactionCreate", async interaction => {
     if (!interaction.isChatInputCommand()) return;
@@ -50,38 +56,32 @@ client.on("interactionCreate", async interaction => {
         const mode = interaction.options.getString("mode") || "quickplay";
         const formatted = battletag.replace("#", "-");
 
+        const url = `https://overfast-api.tekrop.fr/players/${formatted}/summary`;
+
         await interaction.reply("Fetching stats...");
 
         try {
-            // 1️⃣ Get general profile data
-            const summary = await axios.get(
-                `https://overfast-api.tekrop.fr/players/${formatted}/summary`
-            );
+            const { data } = await axios.get(url);
 
-            // 2️⃣ Get mode-specific data
-            const stats = await axios.get(
-                `https://overfast-api.tekrop.fr/players/${formatted}/stats?gamemode=${mode}`
-            );
-
-            const profile = summary.data;
-            const gamemode = stats.data.modes[mode];
+            // Summary data always exists — stats API is what requires gamemode
+            const summary = data;
 
             await interaction.editReply({
                 content:
-`**Stats for ${battletag} (${mode})**
-Level: ${profile.level ?? "Unknown"}
-Endorsement: ${profile.endorsement?.level ?? "?"}
-
-**${mode.toUpperCase()}**
-Games played: ${gamemode?.games_played ?? "N/A"}
-Wins: ${gamemode?.wins ?? "N/A"}
-Losses: ${gamemode?.losses ?? "N/A"}
-
-Data from Overfast API`
+                    `**Stats for ${battletag}**\n` +
+                    `Mode Requested: **${mode}**\n\n` +
+                    `Level: ${summary?.level || "Unknown"}\n` +
+                    `Endorsement: ${summary?.endorsement?.level || "?"}\n` +
+                    `Platform: PC\n\n` +
+                    `*(Gamemode-specific stats will be added soon!)*`
             });
+
         } catch (err) {
-            console.log("API Error:", err.response?.status, err.response?.data);
-            await interaction.editReply(":x: Error: Invalid BattleTag, private profile, or no data for that gamemode.");
+            console.log("API ERROR:", err.response?.status, err.response?.data);
+
+            await interaction.editReply(
+                ":x: Error: Invalid or private BattleTag, or Overfast is not returning stats."
+            );
         }
     }
 });
