@@ -3,10 +3,10 @@ const axios = require("axios");
 require("dotenv").config();
 
 const client = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages]
+    intents: [GatewayIntentBits.Guilds]
 });
 
-// Slash command setup
+// Slash command
 const commands = [
     new SlashCommandBuilder()
         .setName("owstats")
@@ -23,7 +23,6 @@ const commands = [
                     { name: "Quick Play", value: "quickplay" },
                     { name: "Competitive", value: "competitive" }
                 )
-                .setRequired(false)
         )
         .toJSON()
 ];
@@ -43,33 +42,46 @@ const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
     }
 })();
 
-// Handle commands
 client.on("interactionCreate", async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
     if (interaction.commandName === "owstats") {
         const battletag = interaction.options.getString("battletag");
-        const mode = interaction.options.getString("mode") || "quickplay"; // default
-
+        const mode = interaction.options.getString("mode") || "quickplay";
         const formatted = battletag.replace("#", "-");
-
-        const url = `https://overfast-api.tekrop.fr/players/${formatted}/stats?gamemode=${mode}`;
 
         await interaction.reply("Fetching stats...");
 
         try {
-            const { data } = await axios.get(url);
+            // 1️⃣ Get general profile data
+            const summary = await axios.get(
+                `https://overfast-api.tekrop.fr/players/${formatted}/summary`
+            );
+
+            // 2️⃣ Get mode-specific data
+            const stats = await axios.get(
+                `https://overfast-api.tekrop.fr/players/${formatted}/stats?gamemode=${mode}`
+            );
+
+            const profile = summary.data;
+            const gamemode = stats.data.modes[mode];
 
             await interaction.editReply({
-                content: `**Stats for ${battletag} (${mode})**\n` +
-                         `Level: ${data.summary.level || "Unknown"}\n` +
-                         `Endorsement: ${data.summary.endorsement?.level || "?"}\n` +
-                         `Data loaded from Overfast API`
-            });
+                content:
+`**Stats for ${battletag} (${mode})**
+Level: ${profile.level ?? "Unknown"}
+Endorsement: ${profile.endorsement?.level ?? "?"}
 
+**${mode.toUpperCase()}**
+Games played: ${gamemode?.games_played ?? "N/A"}
+Wins: ${gamemode?.wins ?? "N/A"}
+Losses: ${gamemode?.losses ?? "N/A"}
+
+Data from Overfast API`
+            });
         } catch (err) {
             console.log("API Error:", err.response?.status, err.response?.data);
-            await interaction.editReply(":x: Error: The BattleTag is invalid or private, or this gamemode has no data.");
+            await interaction.editReply(":x: Error: Invalid BattleTag, private profile, or no data for that gamemode.");
         }
     }
 });
