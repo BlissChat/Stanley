@@ -1,1 +1,18 @@
+{
+  "name": "ow-stats-bot",
+  "version": "1.0.0",
+  "description": "Discord bot to fetch Overwatch player stats (average kills/deaths, ranked stats, best heroes)",
+  "main": "index.js",
+  "engines": {
+    "node": "18.x"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "axios": "^1.5.0",
+    "discord.js": "^14.13.0",
+    "dotenv": "^16.3.1"
+  }
+}
 
