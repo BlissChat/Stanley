@@ -1,17 +1,24 @@
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require("discord.js");
+const {
+    Client,
+    GatewayIntentBits,
+    REST,
+    Routes,
+    SlashCommandBuilder,
+    EmbedBuilder
+} = require("discord.js");
 const axios = require("axios");
 require("dotenv").config();
 
+// Create bot client
 const client = new Client({
     intents: [GatewayIntentBits.Guilds]
 });
 
-// ███ SLASH COMMAND SETUP ███
-
+// Slash command definition
 const commands = [
     new SlashCommandBuilder()
         .setName("owstats")
-        .setDescription("Get Overwatch stats.")
+        .setDescription("Show Overwatch stats for a player")
         .addStringOption(option =>
             option.setName("battletag")
                 .setDescription("Your BattleTag (example: name#1234)")
@@ -29,61 +36,86 @@ const commands = [
         .toJSON()
 ];
 
+// Register slash commands
 const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
 
-// Register slash commands
 (async () => {
     try {
-        console.log("Registering slash commands...");
+        console.log("Registering /owstats...");
         await rest.put(
             Routes.applicationCommands(process.env.DISCORD_CLIENT_ID),
             { body: commands }
         );
-        console.log("Commands registered.");
+        console.log("Slash commands ready!");
     } catch (err) {
-        console.error("COMMAND REGISTRATION ERROR:", err);
+        console.error("Slash command error:", err);
     }
 })();
 
-
-// ███ COMMAND HANDLER ███
-
+// Handle slash commands
 client.on("interactionCreate", async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
     if (interaction.commandName === "owstats") {
         const battletag = interaction.options.getString("battletag");
         const mode = interaction.options.getString("mode") || "quickplay";
-        const formatted = battletag.replace("#", "-");
 
-        const url = `https://overfast-api.tekrop.fr/players/${formatted}/summary`;
+        const clean = battletag.replace("#", "-");
 
-        await interaction.reply("Fetching stats...");
+        const url = `https://overfast-api.tekrop.fr/players/${clean}/stats?gamemode=${mode}`;
+
+        await interaction.reply("📊 Fetching your stats...");
 
         try {
             const { data } = await axios.get(url);
 
-            // Summary data always exists — stats API is what requires gamemode
-            const summary = data;
+            // summary + hero stats
+            const summary = data.summary || {};
+            const heroes = data?.stats?.top_heroes || [];
 
-            await interaction.editReply({
-                content:
-                    `**Stats for ${battletag}**\n` +
-                    `Mode Requested: **${mode}**\n\n` +
-                    `Level: ${summary?.level || "Unknown"}\n` +
-                    `Endorsement: ${summary?.endorsement?.level || "?"}\n` +
-                    `Platform: PC\n\n` +
-                    `*(Gamemode-specific stats will be added soon!)*`
-            });
+            // Create embed
+            const embed = new EmbedBuilder()
+                .setColor("#f7a500")
+                .setTitle(`${summary.username || battletag} — ${mode.toUpperCase()} STATS`)
+                .setThumbnail(summary.avatar || null)
+                .addFields(
+                    { name: "Level", value: `${summary.level || "Unknown"}`, inline: true },
+                    { name: "Endorsement", value: `${summary.endorsement?.level || "?"}`, inline: true },
+                    { name: "Platform", value: "PC", inline: true }
+                )
+                .setFooter({ text: "Data from Overfast API" });
+
+            // Sort heroes by time played
+            const sortedHeroes = heroes.sort(
+                (a, b) => (b.time_played_seconds ?? 0) - (a.time_played_seconds ?? 0)
+            ).slice(0, 5);
+
+            // Format hero stats fields
+            for (const hero of sortedHeroes) {
+                embed.addFields({
+                    name: `🟦 ${hero.hero_name}`,
+                    value:
+                        `**Time Played:** ${hero.time_played || "0h"}\n` +
+                        `**Winrate:** ${hero.winrate || "0"}%\n` +
+                        `**Elims:** ${hero.eliminations || 0}\n` +
+                        `**Assists:** ${hero.assists || 0}\n` +
+                        `**Deaths:** ${hero.deaths || 0}\n` +
+                        `**Damage:** ${hero.damage || 0}`,
+                    inline: false
+                });
+            }
+
+            await interaction.editReply({ embeds: [embed] });
 
         } catch (err) {
-            console.log("API ERROR:", err.response?.status, err.response?.data);
-
+            console.error("API Error:", err.response?.status, err.response?.data);
             await interaction.editReply(
-                ":x: Error: Invalid or private BattleTag, or Overfast is not returning stats."
+                "❌ Error: Invalid or private BattleTag, or no data for this gamemode."
             );
         }
     }
 });
 
+// Login bot
 client.login(process.env.DISCORD_TOKEN);
+
