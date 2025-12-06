@@ -1,126 +1,100 @@
-require('dotenv').config();
-const { Client, GatewayIntentBits, REST, Routes, EmbedBuilder } = require('discord.js');
-const axios = require('axios');
-
-const TOKEN = process.env.DISCORD_TOKEN;
-const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
-
-if (!TOKEN) {
-  console.error("Missing DISCORD_TOKEN. Set it in Replit Secrets.");
-  process.exit(1);
-}
-
-const commandData = [
-  {
-    name: "stats",
-    description: "Get Overwatch 2 stats for a player",
-    options: [
-      {
-        name: "platform",
-        type: 3,
-        description: "Platform",
-        required: true,
-        choices: [
-          { name: "PC", value: "pc" },
-          { name: "Xbox", value: "xbl" },
-          { name: "PlayStation", value: "psn" }
-        ]
-      },
-      {
-        name: "battletag",
-        type: 3,
-        description: "Battletag (Example: Player#1234)",
-        required: true
-      }
-    ]
-  }
-];
-
-async function registerCommands() {
-  const rest = new REST({ version: "10" }).setToken(TOKEN);
-  await rest.put(Routes.applicationCommands(CLIENT_ID), {
-    body: commandData
-  });
-  console.log("Slash commands registered globally.");
-}
+require("dotenv").config();
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder } = require("discord.js");
+const axios = require("axios");
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
+    intents: [GatewayIntentBits.Guilds]
 });
+
+// ------- REGISTER SLASH COMMAND --------
+const commands = [
+    new SlashCommandBuilder()
+        .setName("stats")
+        .setDescription("Show Overwatch stats for a player")
+        .addStringOption(option =>
+            option.setName("battletag")
+                .setDescription("Example: ilostmyself#11827")
+                .setRequired(true)
+        )
+].map(cmd => cmd.toJSON());
 
 client.once("ready", async () => {
-  console.log(`Logged in as ${client.user.tag}`);
-  await registerCommands();
+    console.log(`Logged in as ${client.user.tag}`);
+
+    // Register slash commands globally
+    const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
+
+    try {
+        await rest.put(
+            Routes.applicationCommands(client.user.id),
+            { body: commands }
+        );
+        console.log("Slash commands registered.");
+    } catch (err) {
+        console.error("Error registering commands:", err);
+    }
 });
 
+// ---------- SLASH COMMAND HANDLER ----------
 client.on("interactionCreate", async interaction => {
-  if (!interaction.isChatInputCommand()) return;
-  if (interaction.commandName !== "stats") return;
+    if (!interaction.isChatInputCommand()) return;
 
-  const platform = interaction.options.getString("platform");
-  const battletag = interaction.options.getString("battletag").trim();
+    if (interaction.commandName === "stats") {
+        const battletag = interaction.options.getString("battletag");
+        const clean = battletag.replace("#", "-"); // Overfast uses dash
 
-  // Convert Player#1234 → Player-1234
-  const tagForApi = battletag.replace("#", "-");
+        await interaction.deferReply();
 
-  await interaction.deferReply();
+        try {
+            // Fetch summary
+            const summaryRes = await axios.get(
+                `https://overfast-api.tekrop.fr/players/${clean}/summary`
+            );
 
-  try {
-    // Main Overfast API URL
-    const url = `https://overfast-api.tekrop.fr/players/${encodeURIComponent(tagForApi)}`;
+            // Fetch stats
+            const statsRes = await axios.get(
+                `https://overfast-api.tekrop.fr/players/${clean}/stats`
+            );
 
-    const res = await axios.get(url, { timeout: 10000 });
+            const summary = summaryRes.data;
+            const heroes = statsRes.data?.quickplay?.heroes || {};
 
-    const data = res.data;
+            // Sort heroes by time played (descending) & take top 5
+            const topHeroes = Object.entries(heroes)
+                .sort((a, b) => (b[1].time_played ?? 0) - (a[1].time_played ?? 0))
+                .slice(0, 5);
 
-    if (!data || data.error) {
-      await interaction.editReply(`Could not find profile for **${battletag}**.`);
-      return;
+            const embed = new EmbedBuilder()
+                .setColor("#f7a500")
+                .setTitle(`${summary.username} — Top 5 Heroes`)
+                .setThumbnail(summary.avatar)
+                .addFields(
+                    { name: "Level", value: `${summary.player_level ?? "?"}`, inline: true },
+                    { name: "Endorsement", value: `${summary.endorsement?.level ?? "?"}`, inline: true }
+                )
+                .setFooter({ text: "Data from Overfast API" });
+
+            for (const [hero, data] of topHeroes) {
+                embed.addFields({
+                    name: `🟦 ${hero}`,
+                    value:
+                        `**Time Played:** ${data.time_played ?? 0} hrs\n` +
+                        `**Win Rate:** ${data.winrate ?? "?"}%\n` +
+                        `**Damage:** ${data.damage_done ?? 0}\n` +
+                        `**Eliminations:** ${data.eliminations ?? 0}\n` +
+                        `**Deaths:** ${data.deaths ?? 0}\n` +
+                        `**Assists:** ${data.assists ?? 0}`,
+                    inline: false
+                });
+            }
+
+            await interaction.editReply({ embeds: [embed] });
+
+        } catch (err) {
+            console.error(err);
+            await interaction.editReply("❌ Error: BattleTag is invalid or private.");
+        }
     }
-
-    // Build Discord Embed
-    const embed = new EmbedBuilder()
-      .setTitle(`${data.summary.username} (${platform.toUpperCase()})`)
-      .setThumbnail(data.summary.avatar || null)
-      .setColor(0xff7f50)
-      .setFooter({ text: "Data source: Overfast API" })
-      .setTimestamp();
-
-    // Basic info
-    embed.addFields(
-      { name: "Name", value: data.summary.username, inline: true },
-      { name: "Level", value: `${data.summary.account_level}`, inline: true },
-      { name: "Endorsement", value: `${data.summary.endorsement.level}`, inline: true }
-    );
-
-    // Competitive ranks
-    if (data.competitive && data.competitive.pc?.skills) {
-      const roles = data.competitive.pc.skills;
-
-      const compText = Object.entries(roles)
-        .map(([role, info]) => `${role}: **${info.division} ${info.tier}**`)
-        .join("\n");
-
-      embed.addFields({ name: "Competitive Ranks", value: compText });
-    }
-
-    // Top Heroes
-    if (data.heroes && data.heroes.playtime) {
-      const list = Object.entries(data.heroes.playtime)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 3)
-        .map(([hero, hours]) => `${hero}: **${hours.toFixed(1)}h**`)
-        .join("\n");
-
-      embed.addFields({ name: "Top Heroes", value: list });
-    }
-
-    await interaction.editReply({ embeds: [embed] });
-
-  } catch (err) {
-    console.error(err);
-    await interaction.editReply("An error occurred while fetching stats.");
-  }
 });
 
-client.login(TOKEN);
+client.login(process.env.TOKEN);
