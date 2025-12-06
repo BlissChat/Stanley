@@ -6,7 +6,6 @@ const {
     SlashCommandBuilder,
     EmbedBuilder
 } = require("discord.js");
-
 const axios = require("axios");
 require("dotenv").config();
 
@@ -14,9 +13,9 @@ const client = new Client({
     intents: [GatewayIntentBits.Guilds]
 });
 
-// --------------------------------------
-// Slash Command Setup
-// --------------------------------------
+// -------------------------------------------------
+// Register Command
+// -------------------------------------------------
 const commands = [
     new SlashCommandBuilder()
         .setName("owstats")
@@ -53,9 +52,9 @@ const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
     }
 })();
 
-// --------------------------------------
+// -------------------------------------------------
 // Command Handler
-// --------------------------------------
+// -------------------------------------------------
 client.on("interactionCreate", async interaction => {
     if (!interaction.isChatInputCommand()) return;
     if (interaction.commandName !== "owstats") return;
@@ -71,21 +70,46 @@ client.on("interactionCreate", async interaction => {
     await interaction.reply("Fetching detailed stats...");
 
     try {
-        // Fetch both endpoints
-        const summary = await axios.get(summaryURL);
-        const stats = await axios.get(statsURL);
+        // -----------------------------
+        // Fetch Data
+        // -----------------------------
+        const summaryRes = await axios.get(summaryURL);
+        const statsRes = await axios.get(statsURL);
 
-        const s = summary.data;
-        const heroes = stats.data?.heroes ?? {};
+        const s = summaryRes.data;
+        const heroes = statsRes.data || {};
 
-        // SORT heroes by most time played
-        const sortedHeroes = Object.entries(heroes)
-            .sort((a, b) => (b[1].time_played ?? 0) - (a[1].time_played ?? 0))
-            .slice(0, 3); // **Top 3 heroes only**
+        // -----------------------------
+        // Extract hero names
+        // -----------------------------
+        const heroList = Object.keys(heroes);
+        if (heroList.length === 0) {
+            return interaction.editReply("No stats available for this mode.");
+        }
 
-        // --------------------------------------
-        // Base embed
-        // --------------------------------------
+        // -----------------------------
+        // Determine top 3 most played
+        // -----------------------------
+        const heroPlayTimes = heroList.map(name => {
+            const heroStats = heroes[name];
+
+            const gameCategory = heroStats.find(c => c.category === "game");
+            const timePlayedStat = gameCategory?.stats.find(s => s.key === "time_played");
+
+            return {
+                name,
+                time: timePlayedStat ? timePlayedStat.value : 0
+            };
+        });
+
+        const top3 = heroPlayTimes
+            .sort((a, b) => b.time - a.time)
+            .slice(0, 3)
+            .map(h => h.name);
+
+        // -----------------------------
+        // Build Embed
+        // -----------------------------
         const embed = new EmbedBuilder()
             .setColor("#ff9f00")
             .setTitle(`${s.username} — ${mode.toUpperCase()} STATS`)
@@ -97,12 +121,11 @@ client.on("interactionCreate", async interaction => {
             )
             .setFooter({ text: "Data from Overfast API" });
 
-        // --------------------------------------
-        // Competitive Rank Info
-        // --------------------------------------
-        if (mode === "competitive" && s.competitive?.pc?.open) {
-            const rank = s.competitive.pc.open;
-
+        // -----------------------------
+        // Competitive Rank
+        // -----------------------------
+        const rank = s?.competitive?.pc?.open;
+        if (mode === "competitive" && rank) {
             embed.addFields({
                 name: "Competitive Rank",
                 value: `${rank.division.toUpperCase()} ${rank.tier}`,
@@ -112,19 +135,37 @@ client.on("interactionCreate", async interaction => {
             if (rank.rank_icon) embed.setImage(rank.rank_icon);
         }
 
-        // --------------------------------------
-        // Add detailed hero stats
-        // --------------------------------------
-        for (const [heroName, h] of sortedHeroes) {
+        // -----------------------------
+        // Add ALL HERO NAMES
+        // -----------------------------
+        embed.addFields({
+            name: "Heroes Played",
+            value: heroList.join(", "),
+            inline: false
+        });
+
+        // -----------------------------
+        // DETAILED STATS FOR TOP 3
+        // -----------------------------
+        for (const heroName of top3) {
+            const heroStats = heroes[heroName];
+
+            const combat = heroStats.find(c => c.category === "combat");
+            const game = heroStats.find(c => c.category === "game");
+            const avg = heroStats.find(c => c.category === "average");
+
+            const damage = combat?.stats.find(s => s.key === "damage_done")?.value ?? 0;
+            const elim = combat?.stats.find(s => s.key === "eliminations")?.value ?? 0;
+            const deaths = combat?.stats.find(s => s.key === "deaths")?.value ?? 0;
+            const timePlayed = game?.stats.find(s => s.key === "time_played")?.value ?? 0;
+
             embed.addFields({
-                name: `⭐ ${heroName}`,
+                name: `⭐ ${heroName} — Detailed Stats`,
                 value:
-                    `**Time Played:** ${h.time_played ?? 0} hrs\n` +
-                    `**Winrate:** ${h.winrate ?? "?"}%\n` +
-                    `**Damage:** ${h.damage_done ?? 0}\n` +
-                    `**Eliminations:** ${h.eliminations ?? 0}\n` +
-                    `**Deaths:** ${h.deaths ?? 0}\n` +
-                    `**Assists:** ${h.assists ?? 0}`,
+                    `**Time Played:** ${timePlayed}s\n` +
+                    `**Damage:** ${damage}\n` +
+                    `**Eliminations:** ${elim}\n` +
+                    `**Deaths:** ${deaths}\n`,
                 inline: false
             });
         }
@@ -132,12 +173,9 @@ client.on("interactionCreate", async interaction => {
         await interaction.editReply({ embeds: [embed] });
 
     } catch (err) {
-        console.log("API Error:", err.response?.status, err.response?.data);
-        await interaction.editReply(
-            ":x: Could not load stats. The BattleTag may be invalid, private, or this mode has no data."
-        );
+        console.error("API ERROR:", err.response?.status, err.response?.data);
+        await interaction.editReply("❌ Could not fetch stats. Battletag may be invalid or private.");
     }
 });
 
 client.login(process.env.DISCORD_TOKEN);
-
