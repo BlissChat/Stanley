@@ -61,7 +61,8 @@ client.on("interactionCreate", async interaction => {
     if (interaction.commandName !== "owstats") return;
 
     const battletag = interaction.options.getString("battletag");
-    const mode = interaction.options.getString("mode"); // required
+    const mode = interaction.options.getString("mode");
+
     const clean = battletag.replace("#", "-");
 
     const summaryURL = `https://overfast-api.tekrop.fr/players/${clean}/summary`;
@@ -70,25 +71,21 @@ client.on("interactionCreate", async interaction => {
     await interaction.reply("Fetching detailed stats...");
 
     try {
-        // ------------------------
-        // Fetch summary + stats
-        // ------------------------
+        // Fetch both endpoints
         const summary = await axios.get(summaryURL);
         const stats = await axios.get(statsURL);
 
         const s = summary.data;
         const heroes = stats.data?.heroes ?? {};
 
-        // ------------------------
-        // Sort & select top 5 heroes
-        // ------------------------
+        // SORT heroes by most time played
         const sortedHeroes = Object.entries(heroes)
             .sort((a, b) => (b[1].time_played ?? 0) - (a[1].time_played ?? 0))
-            .slice(0, 5);
+            .slice(0, 3); // **Top 3 heroes only**
 
-        // ------------------------
-        // Build Embed
-        // ------------------------
+        // --------------------------------------
+        // Base embed
+        // --------------------------------------
         const embed = new EmbedBuilder()
             .setColor("#ff9f00")
             .setTitle(`${s.username} — ${mode.toUpperCase()} STATS`)
@@ -100,9 +97,9 @@ client.on("interactionCreate", async interaction => {
             )
             .setFooter({ text: "Data from Overfast API" });
 
-        // ------------------------
-        // If competitive, show rank icon + division
-        // ------------------------
+        // --------------------------------------
+        // Competitive Rank Info
+        // --------------------------------------
         if (mode === "competitive" && s.competitive?.pc?.open) {
             const rank = s.competitive.pc.open;
 
@@ -115,14 +112,14 @@ client.on("interactionCreate", async interaction => {
             if (rank.rank_icon) embed.setImage(rank.rank_icon);
         }
 
-        // ------------------------
-        // Add hero stats
-        // ------------------------
+        // --------------------------------------
+        // Add detailed hero stats
+        // --------------------------------------
         for (const [heroName, h] of sortedHeroes) {
             embed.addFields({
-                name: `🟦 ${heroName}`,
+                name: `⭐ ${heroName}`,
                 value:
-                    `**Time Played:** ${h.time_played ?? 0} hours\n` +
+                    `**Time Played:** ${h.time_played ?? 0} hrs\n` +
                     `**Winrate:** ${h.winrate ?? "?"}%\n` +
                     `**Damage:** ${h.damage_done ?? 0}\n` +
                     `**Eliminations:** ${h.eliminations ?? 0}\n` +
@@ -137,9 +134,10 @@ client.on("interactionCreate", async interaction => {
     } catch (err) {
         console.log("API Error:", err.response?.status, err.response?.data);
         await interaction.editReply(
-            ":x: Could not load stats. BattleTag may be invalid, private, or this mode has no data."
+            ":x: Could not load stats. The BattleTag may be invalid, private, or this mode has no data."
         );
     }
 });
 
 client.login(process.env.DISCORD_TOKEN);
+
